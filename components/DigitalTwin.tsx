@@ -102,13 +102,17 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
 
     setVehicles(prevVehicles => {
       const nextVehicles: VisualVehicle[] = [];
-      const laneOccupied = [false, false, false];
+      const laneOccupancy = [false, false, false]; // Track occupancy at spawn point
 
       // 1. Move & Detect
       prevVehicles.forEach(v => {
-        // Physics: Speed (km/h) -> Screen % per second
-        // Adjust multiplier to calibrate visual speed
-        const moveStep = v.speed * 0.4 * deltaTime; 
+        // Perspective Physics: 
+        // Objects should appear to move faster as they move down the screen (closer to camera).
+        // Base factor 0.15 is calibrated for the start.
+        // (1 + v.y/50) creates a curve where speed doubles by y=50 and triples by y=100.
+        const perspectiveFactor = 1 + (v.y / 60); 
+        const moveStep = v.speed * 0.15 * deltaTime * perspectiveFactor; 
+        
         v.y += moveStep;
 
         // Check Trigger Line (Gantry @ 72%)
@@ -121,29 +125,30 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
         // Keep if on screen
         if (v.y < 120) {
           nextVehicles.push(v);
-          // Mark lane occupied if vehicle is in the "spawn zone" (top 15%)
+          // Overlap Prevention: Mark lane occupied if vehicle is in the "spawn zone" (top 15%)
           if (v.y < 15) {
-            laneOccupied[v.lane] = true;
+            laneOccupancy[v.lane] = true;
           }
         }
       });
 
       // 2. Spawn Logic
-      const spawnInterval = Math.max(200, 2500 - (trafficVolume * 20)); // Min 200ms, Max 2.5s
+      // Traffic volume affects spawn interval. 
+      // 100% volume -> ~300ms min interval. 0% volume -> ~2500ms.
+      const spawnInterval = Math.max(300, 2500 - (trafficVolume * 22));
+      
       if (time - lastSpawnTime.current > spawnInterval) {
-        // Try to spawn
-        if (Math.random() < 0.8) {
-           const newVehicle = createVehicle(laneOccupied);
+        // Try to spawn with a randomness factor to vary gaps
+        if (Math.random() < 0.6) { 
+           const newVehicle = createVehicle(laneOccupancy);
            if (newVehicle) {
              nextVehicles.push(newVehicle);
              lastSpawnTime.current = time;
            }
-        } else {
-           // Skip frame to add variety
-           lastSpawnTime.current = time + 100;
         }
       }
 
+      // Sort by Y so closer vehicles (higher Y) render on top of further ones (Z-order)
       return nextVehicles.sort((a, b) => a.y - b.y);
     });
 
@@ -169,12 +174,15 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
       }
     }
 
-    // Smart Lane Selection
+    // Smart Lane Selection with Speed Logic
     let availableLanes: number[] = [];
+    
+    // Heavy vehicles avoid fast lane (Lane 2)
     if (selectedType === VehicleClass.CLASS_7_LHCV || selectedType === VehicleClass.CLASS_4_HCV) {
-        if (!laneOccupied[0]) availableLanes.push(0);
-        if (!laneOccupied[1]) availableLanes.push(1);
+        if (!laneOccupied[0]) availableLanes.push(0); // Slow/Exit
+        if (!laneOccupied[1]) availableLanes.push(1); // Middle
     } else {
+        // Cars use all lanes
         if (!laneOccupied[0]) availableLanes.push(0);
         if (!laneOccupied[1]) availableLanes.push(1);
         if (!laneOccupied[2]) availableLanes.push(2);
@@ -185,12 +193,19 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
     // Pick random available lane
     const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
 
-    // Speed calculation
-    let baseSpeed = 70;
+    // Realistic Speed Assignment (km/h)
+    // Lane 0 (Left): Slow/Merging ~ 60-70 km/h
+    // Lane 1 (Center): Cruising ~ 75-85 km/h
+    // Lane 2 (Right): Overtaking ~ 90-110 km/h
+    let baseSpeed = 65; 
     if (lane === 1) baseSpeed = 80;
     if (lane === 2) baseSpeed = 100;
-    if (selectedType === VehicleClass.CLASS_7_LHCV) baseSpeed *= 0.8;
+    
+    // Vehicle type speed penalty
+    if (selectedType === VehicleClass.CLASS_7_LHCV) baseSpeed *= 0.85; // Heavy trucks slower
     if (selectedType === VehicleClass.CLASS_4_HCV) baseSpeed *= 0.9;
+    
+    // Add randomness (+/- 10%)
     const finalSpeed = baseSpeed * (0.9 + Math.random() * 0.2);
 
     // Visual Variations
@@ -241,7 +256,8 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
   // Render Individual Vehicle Models
   const renderVehicle = (v: VisualVehicle) => {
     // 3D Perspective Scale: Items get larger as y increases (approaching viewer)
-    const scale = 0.5 + (v.y / 100) * 1.8; 
+    // Non-linear scale to match perspective speed
+    const scale = 0.4 + Math.pow(v.y / 100, 1.2) * 2.0; 
     const opacity = v.y < -5 ? 0 : 1;
 
     // Detection Badge - Shows briefly after processing
