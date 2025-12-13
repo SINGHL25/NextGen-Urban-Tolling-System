@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Device, DeviceStatus, VehicleClass } from '../types';
 import { TRAFFIC_DISTRIBUTION } from '../constants';
-import { Video, Server, Battery, Zap, Activity, Aperture, ArrowDown, Wifi } from 'lucide-react';
+import { Video, Server, Battery, Zap, Activity, Aperture, ArrowDown, Wifi, Siren } from 'lucide-react';
 
 interface DigitalTwinProps {
   devices: Device[];
@@ -67,7 +67,7 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
         v.y += moveStep;
 
         // Check Trigger Line (The Gantry is approx at 75% down screen)
-        const TRIGGER_LINE = 75;
+        const TRIGGER_LINE = 72; // Adjusted for new visual perspective
         if (v.y >= TRIGGER_LINE && !v.processed) {
           v.processed = true;
           triggerDetection(v);
@@ -141,7 +141,7 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
 
   const triggerDetection = (v: VisualVehicle) => {
     setFlashLane(v.lane);
-    setTimeout(() => setFlashLane(null), 100); // Faster flash
+    setTimeout(() => setFlashLane(null), 50); // Faster, sharper flash
     onVehicleDetected(v.type, v.lane + 1, v.speed);
   };
 
@@ -149,9 +149,9 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
 
   const getStatusColor = (status: DeviceStatus) => {
     switch (status) {
-      case DeviceStatus.ONLINE: return 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]';
-      case DeviceStatus.WARNING: return 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.8)]';
-      case DeviceStatus.OFFLINE: return 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.8)]';
+      case DeviceStatus.ONLINE: return 'bg-emerald-500 shadow-[0_0_8px_#10b981]';
+      case DeviceStatus.WARNING: return 'bg-amber-500 shadow-[0_0_8px_#f59e0b]';
+      case DeviceStatus.OFFLINE: return 'bg-rose-500 shadow-[0_0_8px_#f43f5e]';
       default: return 'bg-gray-500';
     }
   };
@@ -318,6 +318,70 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
     );
   };
 
+  // --- Render Devices for a Lane ---
+  const renderLaneEquipment = (laneIndex: number, deviceList: Device[]) => {
+      const isFlash = flashLane === laneIndex;
+      const cam = deviceList.find(d => d.type === 'CAMERA');
+      const laser = deviceList.find(d => d.type === 'LASER');
+      const status = cam?.status || DeviceStatus.ONLINE;
+
+      return (
+        <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => cam && onDeviceClick(cam)}>
+             {/* Lane Control Sign (LCS) */}
+             <div className="mb-4 w-16 h-16 bg-black border-4 border-zinc-700 rounded-md flex items-center justify-center relative shadow-lg overflow-hidden">
+                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,0,0,0)_50%,rgba(0,0,0,0.8)_100%)] z-10"></div>
+                 {/* LED Matrix Grid Effect */}
+                 <div className="absolute inset-0 bg-[length:2px_2px] bg-[rgba(30,30,30,1)] opacity-50 z-0"></div>
+                 <span className="text-emerald-500 font-mono font-bold text-lg tracking-widest z-10 drop-shadow-[0_0_5px_rgba(16,185,129,0.8)]">80</span>
+                 {/* Warning corner LEDs */}
+                 <div className="absolute top-1 left-1 w-1 h-1 bg-amber-500 rounded-full animate-pulse"></div>
+                 <div className="absolute top-1 right-1 w-1 h-1 bg-amber-500 rounded-full animate-pulse delay-75"></div>
+                 <div className="absolute bottom-1 left-1 w-1 h-1 bg-amber-500 rounded-full animate-pulse delay-150"></div>
+                 <div className="absolute bottom-1 right-1 w-1 h-1 bg-amber-500 rounded-full animate-pulse delay-300"></div>
+             </div>
+             
+             {/* Mounting Bracket */}
+             <div className="h-8 w-1 bg-zinc-500 mb-[-2px]"></div>
+
+             {/* Sensor Housing Cluster */}
+             <div className="relative flex gap-1 bg-zinc-800 p-1.5 rounded-b-lg border border-zinc-600 shadow-xl transform transition-transform hover:scale-110">
+                 
+                 {/* ANPR Camera Unit */}
+                 <div className="flex flex-col items-center gap-1">
+                    <div className="w-8 h-8 bg-black rounded-full border-2 border-zinc-500 flex items-center justify-center relative overflow-hidden">
+                        {/* Lens Reflection */}
+                        <div className="absolute top-1 right-1 w-3 h-3 bg-white/10 rounded-full blur-[1px]"></div>
+                        <div className="w-3 h-3 bg-indigo-900 rounded-full border border-indigo-700"></div>
+                    </div>
+                    <div className={`w-6 h-1 rounded-full ${getStatusColor(status)}`}></div>
+                 </div>
+
+                 {/* IR Illuminator / Laser Unit */}
+                 {laser && (
+                    <div className="flex flex-col items-center gap-1">
+                        <div className="w-8 h-8 bg-zinc-900 rounded border border-zinc-600 grid grid-cols-3 gap-[1px] p-[2px] content-center">
+                            {/* IR LEDs */}
+                            {Array.from({length: 9}).map((_, i) => (
+                                <div key={i} className="w-1.5 h-1.5 bg-red-900/50 rounded-full"></div>
+                            ))}
+                        </div>
+                    </div>
+                 )}
+
+                 {/* Flash Effect Overlay */}
+                 {isFlash && (
+                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-48 h-48 bg-purple-200/40 rounded-full blur-2xl z-50 animate-[ping_0.1s_ease-out]"></div>
+                 )}
+             </div>
+             
+             {/* Lane Label */}
+             <div className="mt-2 text-[9px] bg-black/70 px-1.5 py-0.5 rounded text-zinc-400 font-mono tracking-wider border border-white/10">
+                 LANE {laneIndex + 1}
+             </div>
+        </div>
+      );
+  }
+
   return (
     <div className={`relative w-full h-[600px] overflow-hidden rounded-xl border border-white/10 transition-colors duration-2000 ${isNight ? 'bg-slate-900' : 'bg-sky-300'}`}>
       
@@ -333,10 +397,10 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
       `}</style>
 
       {/* --- Environment --- */}
-      <div className={`absolute inset-0 bg-gradient-to-b ${isNight ? 'from-slate-900 via-slate-800 to-black' : 'from-sky-400 via-sky-200 to-emerald-800'} opacity-100`}></div>
+      <div className={`absolute inset-0 bg-gradient-to-b ${isNight ? 'from-slate-950 via-slate-900 to-black' : 'from-sky-400 via-sky-200 to-emerald-900'} opacity-100`}></div>
       
       {/* Cityscape Silhouette */}
-      <div className={`absolute bottom-[35%] left-0 w-full h-32 bg-[url('https://raw.githubusercontent.com/google-fonts/noto-emoji/main/png/512/1f303.png')] opacity-20 bg-repeat-x bg-contain`}></div>
+      <div className={`absolute bottom-[35%] left-0 w-full h-48 bg-[url('https://raw.githubusercontent.com/google-fonts/noto-emoji/main/png/512/1f303.png')] opacity-30 bg-repeat-x bg-contain grayscale mix-blend-overlay`}></div>
 
       {/* --- The Road (Perspective Plane) --- */}
       <div className="absolute bottom-0 w-full h-[70%] bg-zinc-800 origin-bottom transform [perspective:1000px] overflow-hidden flex justify-center">
@@ -348,12 +412,15 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
                 {/* Left Shoulder */}
                 <div className="h-full w-4 bg-yellow-500 border-r border-yellow-600"></div>
                 {/* Lane Divider 1 */}
-                <div className="h-full w-2 bg-dashed-line opacity-70"></div>
+                <div className="h-full w-3 bg-dashed-line opacity-70"></div>
                 {/* Lane Divider 2 */}
-                <div className="h-full w-2 bg-dashed-line opacity-70"></div>
+                <div className="h-full w-3 bg-dashed-line opacity-70"></div>
                 {/* Right Shoulder */}
                 <div className="h-full w-4 bg-white border-l border-zinc-400"></div>
             </div>
+            
+            {/* Gantry Shadow on Road */}
+            <div className="absolute top-[30%] left-0 w-full h-8 bg-black/50 blur-xl"></div>
          </div>
       </div>
 
@@ -364,67 +431,71 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
 
 
       {/* --- The Gantry (Foreground) --- */}
-      <div className="absolute top-[65%] left-1/2 -translate-x-1/2 w-full max-w-4xl z-30 pointer-events-none">
+      <div className="absolute top-[58%] left-1/2 -translate-x-1/2 w-full max-w-5xl z-30 pointer-events-none perspective-[1000px]">
           
-          {/* Main Truss */}
-          <div className="w-full h-24 bg-zinc-900/90 border-y-4 border-zinc-600 relative flex items-center justify-evenly shadow-2xl backdrop-blur-sm">
-             {/* Texture */}
-             <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(0,0,0,0.5)_25%,transparent_25%,transparent_50%,rgba(0,0,0,0.5)_50%,rgba(0,0,0,0.5)_75%,transparent_75%,transparent)] bg-[length:10px_10px] opacity-20"></div>
+          {/* Support Pillars (Left & Right) */}
+          <div className="absolute left-4 top-[-50px] bottom-[-400px] w-16 bg-gradient-to-r from-zinc-700 to-zinc-800 border-r-4 border-zinc-900 z-0">
+               {/* Concrete Base */}
+               <div className="absolute bottom-[350px] -left-4 w-24 h-32 bg-zinc-500 border-t border-zinc-400 rounded-sm"></div>
+               {/* Warning Light */}
+               <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-4 h-4 bg-red-600 rounded-full animate-ping"></div>
+          </div>
+          <div className="absolute right-4 top-[-50px] bottom-[-400px] w-16 bg-gradient-to-l from-zinc-700 to-zinc-800 border-l-4 border-zinc-900 z-0">
+               {/* Concrete Base */}
+               <div className="absolute bottom-[350px] -right-4 w-24 h-32 bg-zinc-500 border-t border-zinc-400 rounded-sm"></div>
+               {/* Warning Light */}
+               <div className="absolute -top-6 left-1/2 -translate-x-1/2 w-4 h-4 bg-red-600 rounded-full animate-ping delay-700"></div>
+          </div>
 
-             {/* Lane 1 Equipment */}
-             <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => onDeviceClick(devices[0])}>
-                 <div className="w-16 h-8 bg-black border-2 border-zinc-700 mb-2 flex items-center justify-center rounded overflow-hidden shadow-[0_0_15px_rgba(0,255,0,0.2)]">
-                    <ArrowDown className="text-emerald-500 animate-bounce" size={24} />
-                 </div>
-                 <div className="w-10 h-12 bg-zinc-800 rounded-b border border-zinc-600 flex flex-col items-center justify-end pb-1 relative">
-                    <div className={`w-2 h-2 rounded-full mb-1 ${getStatusColor(devices[0].status)}`}></div>
-                    <Aperture size={14} className="text-zinc-400" />
-                    {/* Flash Effect */}
-                    {flashLane === 0 && <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-32 bg-white rounded-full blur-xl opacity-80 animate-ping"></div>}
-                 </div>
-                 <div className="mt-1 text-[8px] bg-black/50 px-1 text-white font-mono">LANE 1</div>
+          {/* Main Horizontal Truss Structure */}
+          <div className="relative w-full h-40 bg-zinc-800/90 border-y-4 border-zinc-600 shadow-2xl backdrop-blur-sm z-10 flex flex-col justify-end pb-2">
+             
+             {/* Industrial Cross Bracing Texture */}
+             <div className="absolute inset-0 opacity-40 bg-[repeating-linear-gradient(45deg,transparent,transparent_20px,#18181b_20px,#18181b_24px),repeating-linear-gradient(-45deg,transparent,transparent_20px,#18181b_20px,#18181b_24px)] pointer-events-none"></div>
+             
+             {/* Maintenance Walkway Railing (Top) */}
+             <div className="absolute -top-10 left-0 w-full h-10 border-b-2 border-zinc-500 flex justify-between px-2 items-end">
+                  {/* Railing posts */}
+                  {Array.from({length: 12}).map((_, i) => (
+                      <div key={i} className="w-1 h-full bg-zinc-500"></div>
+                  ))}
+                  <div className="absolute top-2 left-0 w-full h-1 bg-zinc-500"></div> {/* Top bar */}
+                  <div className="absolute top-6 left-0 w-full h-1 bg-zinc-500"></div> {/* Mid bar */}
+             </div>
+             
+             {/* Content Container (LCS + Sensors) */}
+             <div className="relative flex w-full justify-evenly items-start z-20 pt-4">
+                 
+                 {/* Lane 1 Equipment */}
+                 {renderLaneEquipment(0, [devices[0], devices[1]])}
+
+                 {/* Lane 2 Equipment */}
+                 {renderLaneEquipment(1, [devices[2], devices[3]])}
+
+                 {/* Lane 3 Equipment */}
+                 {renderLaneEquipment(2, [devices[4], devices[5]])}
+
              </div>
 
-             {/* Lane 2 Equipment */}
-             <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => onDeviceClick(devices[2])}>
-                 <div className="w-16 h-8 bg-black border-2 border-zinc-700 mb-2 flex items-center justify-center rounded overflow-hidden shadow-[0_0_15px_rgba(0,255,0,0.2)]">
-                    <ArrowDown className="text-emerald-500 animate-bounce" size={24} />
-                 </div>
-                 <div className="w-10 h-12 bg-zinc-800 rounded-b border border-zinc-600 flex flex-col items-center justify-end pb-1 relative">
-                    <div className={`w-2 h-2 rounded-full mb-1 ${getStatusColor(devices[2].status)}`}></div>
-                    <Aperture size={14} className="text-zinc-400" />
-                     {flashLane === 1 && <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-32 bg-white rounded-full blur-xl opacity-80 animate-ping"></div>}
-                 </div>
-                 <div className="mt-1 text-[8px] bg-black/50 px-1 text-white font-mono">LANE 2</div>
+             {/* Signage on Truss */}
+             <div className="absolute top-2 left-8 bg-yellow-500 text-black font-bold text-[10px] px-2 py-0.5 rounded-sm border border-yellow-600 shadow-sm">
+                 MAX HEIGHT 4.8M
              </div>
-
-             {/* Lane 3 Equipment */}
-             <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => onDeviceClick(devices[4])}>
-                 <div className="w-16 h-8 bg-black border-2 border-zinc-700 mb-2 flex items-center justify-center rounded overflow-hidden shadow-[0_0_15px_rgba(0,255,0,0.2)]">
-                    <ArrowDown className="text-emerald-500 animate-bounce" size={24} />
-                 </div>
-                 <div className="w-10 h-12 bg-zinc-800 rounded-b border border-zinc-600 flex flex-col items-center justify-end pb-1 relative">
-                    <div className={`w-2 h-2 rounded-full mb-1 ${getStatusColor(devices[4].status)}`}></div>
-                    <Aperture size={14} className="text-zinc-400" />
-                     {flashLane === 2 && <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-32 bg-white rounded-full blur-xl opacity-80 animate-ping"></div>}
-                 </div>
-                 <div className="mt-1 text-[8px] bg-black/50 px-1 text-white font-mono">LANE 3</div>
+             <div className="absolute top-2 right-8 bg-zinc-200 text-black font-bold text-[10px] px-2 py-0.5 rounded-sm border border-zinc-400 shadow-sm">
+                 TOLL ZONE
              </div>
 
           </div>
 
-          {/* Pillars */}
-          <div className="absolute -left-8 top-[-50px] bottom-[-400px] w-12 bg-zinc-800 border-r-4 border-zinc-900"></div>
-          <div className="absolute -right-8 top-[-50px] bottom-[-400px] w-12 bg-zinc-800 border-l-4 border-zinc-900"></div>
-
-          {/* Side Cabinets Visualization */}
-          <div className="absolute -right-32 bottom-[-100px] w-24 h-40 pointer-events-auto group cursor-pointer" onClick={() => onDeviceClick(devices.find(d => d.type === 'CABINET')!)}>
-              <div className="w-full h-full bg-zinc-400 border-2 border-zinc-500 rounded shadow-2xl relative">
-                  <div className="absolute top-2 right-2 w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
-                  <div className="absolute bottom-4 left-4 right-4 h-2 bg-zinc-500/50"></div>
-                  <div className="absolute top-1/2 left-2 w-16 h-1 bg-zinc-500"></div>
+          {/* Side Cabinets Visualization (Moved slightly out for composition) */}
+          <div className="absolute -right-24 bottom-[-80px] w-20 h-32 pointer-events-auto group cursor-pointer z-20" onClick={() => onDeviceClick(devices.find(d => d.type === 'CABINET')!)}>
+              <div className="w-full h-full bg-zinc-300 border-2 border-zinc-400 rounded shadow-2xl relative">
+                  <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_5px_#10b981]"></div>
+                  <div className="absolute bottom-4 left-3 right-3 h-1 bg-zinc-400"></div> {/* Vent */}
+                  <div className="absolute top-4 left-3 right-3 h-1 bg-zinc-400"></div> {/* Vent */}
+                  <div className="absolute top-1/2 left-2 w-2 h-8 bg-zinc-400 rounded-full"></div> {/* Handle */}
                   {/* Tooltip */}
-                  <div className="opacity-0 group-hover:opacity-100 absolute -top-10 left-0 bg-black text-white text-xs p-1 rounded transition-opacity">
+                  <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-0 bg-black text-white text-[10px] p-1 rounded transition-opacity whitespace-nowrap border border-zinc-700">
                      Cabinet A (Online)
                   </div>
               </div>
