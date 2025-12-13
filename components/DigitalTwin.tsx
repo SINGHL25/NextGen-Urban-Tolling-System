@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Device, DeviceStatus, VehicleClass } from '../types';
 import { TRAFFIC_DISTRIBUTION } from '../constants';
-import { Video, Server, Battery, Zap, Activity, Aperture, ArrowDown, Wifi, Siren } from 'lucide-react';
+import { Video, Server, Battery, Zap, Activity, Aperture, ArrowDown, Wifi, Siren, Cpu, HardDrive, Network } from 'lucide-react';
 
 interface DigitalTwinProps {
   devices: Device[];
@@ -41,6 +41,51 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
   const lastSpawnTime = useRef<number>(0);
   const [hoveredDevice, setHoveredDevice] = useState<string | null>(null);
   const [flashLane, setFlashLane] = useState<number | null>(null); // Lane index triggering flash
+
+  // --- Real-time Metrics Simulation State ---
+  const [deviceMetrics, setDeviceMetrics] = useState<Record<string, any>>({});
+
+  useEffect(() => {
+    if (!isSimRunning) return;
+
+    const interval = setInterval(() => {
+      const newMetrics: Record<string, any> = {};
+      devices.forEach(d => {
+        // Fluctuation Factors
+        const loadFactor = trafficVolume / 100;
+        const randomFlux = Math.random();
+
+        if (d.type === 'CAMERA') {
+           newMetrics[d.id] = {
+             fps: (29.5 + (randomFlux * 1.5) - (loadFactor * 2)).toFixed(1), // Drops slightly under load
+             errorRate: (Math.random() * 0.02 + (loadFactor * 0.05)).toFixed(3) + '%',
+             bitrate: (4 + (randomFlux * 2)).toFixed(1) + ' Mbps'
+           };
+        } else if (d.type === 'SERVER' || d.type === 'CABINET') {
+           newMetrics[d.id] = {
+             cpu: Math.floor(15 + (loadFactor * 60) + (randomFlux * 10)) + '%',
+             mem: Math.floor(30 + (loadFactor * 20) + (randomFlux * 5)) + '%',
+             conns: Math.floor(100 + (loadFactor * 500) + (randomFlux * 20)),
+             temp: Math.floor(35 + (loadFactor * 15)) + '°C'
+           };
+        } else if (d.type === 'SWITCH') {
+            newMetrics[d.id] = {
+                throughput: (1.2 + (loadFactor * 2.5)).toFixed(2) + ' Gbps',
+                packets: Math.floor(5000 + (loadFactor * 10000)) + '/s'
+            };
+        } else if (d.type === 'LASER') {
+             newMetrics[d.id] = {
+                 scans: Math.floor(50 + (randomFlux * 5)) + ' Hz',
+                 status: 'OK'
+             };
+        }
+      });
+      setDeviceMetrics(newMetrics);
+    }, 800); // Update metrics every 800ms
+
+    return () => clearInterval(interval);
+  }, [isSimRunning, trafficVolume, devices]);
+
 
   // --- Animation Loop ---
   const animate = (time: number) => {
@@ -99,9 +144,6 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
         }
       }
 
-      // Sort by Y for proper Z-indexing (vehicles in front drawn last? No, HTML order means last is top. 
-      // We want closer vehicles (High Y) to overlap further ones (Low Y).
-      // So Low Y first (drawn behind), High Y last (drawn in front).
       return nextVehicles.sort((a, b) => a.y - b.y);
     });
 
@@ -128,7 +170,6 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
     }
 
     // Smart Lane Selection
-    // Heavy vehicles prefer left lanes (0, 1), Fast cars prefer right (2)
     let availableLanes: number[] = [];
     if (selectedType === VehicleClass.CLASS_7_LHCV || selectedType === VehicleClass.CLASS_4_HCV) {
         if (!laneOccupied[0]) availableLanes.push(0);
@@ -144,17 +185,12 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
     // Pick random available lane
     const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
 
-    // Speed calculation based on lane & type
-    // Lane 1: 60-80, Lane 2: 70-90, Lane 3: 90-110
+    // Speed calculation
     let baseSpeed = 70;
     if (lane === 1) baseSpeed = 80;
     if (lane === 2) baseSpeed = 100;
-
-    // Adjust for type
-    if (selectedType === VehicleClass.CLASS_7_LHCV) baseSpeed *= 0.8; // Slow down big trucks
+    if (selectedType === VehicleClass.CLASS_7_LHCV) baseSpeed *= 0.8;
     if (selectedType === VehicleClass.CLASS_4_HCV) baseSpeed *= 0.9;
-
-    // Add Randomness (+/- 10%)
     const finalSpeed = baseSpeed * (0.9 + Math.random() * 0.2);
 
     // Visual Variations
@@ -208,6 +244,24 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
     const scale = 0.5 + (v.y / 100) * 1.8; 
     const opacity = v.y < -5 ? 0 : 1;
 
+    // Detection Badge - Shows briefly after processing
+    const showBadge = v.processed && v.y < 100;
+    const badgeLabel = {
+        [VehicleClass.CLASS_1_MOTO]: 'CL 1',
+        [VehicleClass.CLASS_2_CAR]: 'CL 2',
+        [VehicleClass.CLASS_4_HCV]: 'CL 4',
+        [VehicleClass.CLASS_7_LHCV]: 'CL 7',
+    }[v.type];
+
+    const detectionBadge = showBadge ? (
+        <div className="absolute -top-12 left-1/2 -translate-x-1/2 flex flex-col items-center animate-[popIn_0.3s_cubic-bezier(0.175,0.885,0.32,1.275)]" style={{ zIndex: 100 }}>
+             <div className="bg-emerald-500 text-black text-[6px] font-bold px-1.5 py-0.5 rounded shadow-[0_0_10px_rgba(16,185,129,0.6)] border border-emerald-400 whitespace-nowrap">
+                {badgeLabel}
+             </div>
+             <div className="w-0.5 h-3 bg-emerald-500"></div>
+        </div>
+    ) : null;
+
     // Headlight logic
     const headlights = (
         <>
@@ -232,116 +286,100 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
       </>
     );
 
-    // CSS for suspension animation
     const suspensionStyle = { animation: `rumble ${0.2 + Math.random() * 0.1}s infinite linear`, willChange: 'transform' };
 
     let content = null;
-
+    
     if (v.type === VehicleClass.CLASS_1_MOTO) {
-      // Motorcycle
       content = (
         <div className="relative w-4 h-10" style={suspensionStyle}>
+            {detectionBadge}
             {shadow}
             <div className="absolute inset-0 bg-zinc-800 rounded-full flex flex-col items-center">
-                 <div className={`w-3 h-4 ${v.color} rounded-t-full mt-1`}></div> {/* Rider/Tank */}
-                 <div className="w-4 h-1 bg-zinc-400 mt-1"></div> {/* Handlebars */}
-                 <div className="w-2 h-2 bg-yellow-200 rounded-full mt-auto mb-1 shadow-lg"></div> {/* Headlight */}
+                 <div className={`w-3 h-4 ${v.color} rounded-t-full mt-1`}></div>
+                 <div className="w-4 h-1 bg-zinc-400 mt-1"></div>
+                 <div className="w-2 h-2 bg-yellow-200 rounded-full mt-auto mb-1 shadow-lg"></div>
                  {isNight && <div className="absolute bottom-[-40px] w-4 h-16 bg-gradient-to-b from-yellow-100/40 to-transparent blur-md"></div>}
             </div>
         </div>
       );
     } else if (v.type === VehicleClass.CLASS_2_CAR) {
-      // Car Variants
       const isSuv = v.variant === 'suv';
       const isSport = v.variant === 'sport';
       const width = isSuv ? 'w-14' : 'w-12';
       const height = isSuv ? 'h-24' : 'h-22';
-      
       content = (
         <div className={`relative ${width} ${height}`} style={suspensionStyle}>
+           {detectionBadge}
            {shadow}
            {wheels()}
-           {/* Chassis */}
            <div className={`absolute inset-0 ${v.color} rounded-lg overflow-hidden shadow-inner border-b-2 border-black/20`}>
-              {/* Roof / Windshield Area */}
+              {/* Spoiler for Sport */}
+              {isSport && <div className="absolute -top-1.5 left-1 right-1 h-2 bg-inherit brightness-75 rounded-t-sm z-0 shadow-sm border-t border-white/10"></div>}
+
+              {/* Roof Area */}
               <div className={`absolute top-[20%] left-[5%] right-[5%] bottom-[25%] bg-zinc-900/20 rounded-lg`}>
-                 {/* Windshield */}
                  <div className="absolute bottom-0 left-0 right-0 h-[40%] bg-gradient-to-t from-sky-300/40 to-sky-900/60 backdrop-blur-[1px]"></div>
-                 {/* Rear Window */}
                  <div className="absolute top-0 left-0 right-0 h-[25%] bg-black/60"></div>
-                 {/* Roof Top */}
                  <div className={`absolute top-[25%] left-0 right-0 bottom-[40%] ${v.color} brightness-110`}></div>
               </div>
-              {/* Hood Details */}
+
+              {/* Roof Rails for SUV */}
+              {isSuv && (
+                  <>
+                      <div className="absolute top-[20%] left-[10%] w-[5%] h-[40%] bg-black/40 rounded-full"></div>
+                      <div className="absolute top-[20%] right-[10%] w-[5%] h-[40%] bg-black/40 rounded-full"></div>
+                  </>
+              )}
+
               <div className="absolute bottom-0 left-0 w-full h-[25%] bg-gradient-to-t from-black/10 to-transparent"></div>
-              {/* Grill */}
               <div className="absolute bottom-0.5 left-1/4 right-1/4 h-1 bg-black/50 rounded-full"></div>
               {headlights}
            </div>
         </div>
       );
     } else if (v.type === VehicleClass.CLASS_4_HCV) {
-        // Truck (Cab + Box)
         content = (
             <div className="relative w-16 h-36" style={suspensionStyle}>
+                {detectionBadge}
                 {shadow}
-                {/* Rear Wheels */}
                 <div className="absolute -left-1 top-[10%] w-1.5 h-6 bg-black rounded-l"></div>
                 <div className="absolute -right-1 top-[10%] w-1.5 h-6 bg-black rounded-r"></div>
-                {/* Front Wheels */}
                 <div className="absolute -left-1 bottom-[10%] w-1.5 h-4 bg-black rounded-l"></div>
                 <div className="absolute -right-1 bottom-[10%] w-1.5 h-4 bg-black rounded-r"></div>
-
-                {/* Cargo Box (Rear/Top) */}
                 <div className={`absolute top-0 left-0 w-full h-[70%] bg-zinc-100 border border-zinc-300 rounded-sm shadow-sm flex items-center justify-center overflow-hidden`}>
-                     {/* Corrugated Texture */}
                      <div className="w-full h-full opacity-10 bg-[repeating-linear-gradient(90deg,transparent,transparent_4px,#000_4px,#000_5px)]"></div>
                 </div>
-
-                {/* Connector */}
                 <div className="absolute top-[68%] left-1/3 right-1/3 h-2 bg-zinc-800"></div>
-
-                {/* Cab (Front/Bottom) */}
                 <div className={`absolute bottom-0 left-0 w-full h-[28%] ${v.color} rounded-sm shadow-md border-b-2 border-black/20`}>
-                    <div className="absolute top-1 left-1 right-1 h-[40%] bg-sky-900 rounded-sm"></div> {/* Windshield */}
-                    <div className="absolute bottom-0 left-0 w-full h-2 bg-zinc-800"></div> {/* Bumper */}
+                    <div className="absolute top-1 left-1 right-1 h-[40%] bg-sky-900 rounded-sm"></div>
+                    <div className="absolute bottom-0 left-0 w-full h-2 bg-zinc-800"></div>
                     {headlights}
                 </div>
             </div>
         );
     } else if (v.type === VehicleClass.CLASS_7_LHCV) {
-        // Road Train (Trailer 2 + Trailer 1 + Cab)
         content = (
             <div className="relative w-16 h-64" style={suspensionStyle}>
+                {detectionBadge}
                 {shadow}
-                
-                {/* Trailer 2 (Top) */}
                 <div className="absolute top-0 left-0 w-full h-[30%] bg-zinc-200 border border-zinc-400 rounded-sm shadow-sm">
                     <div className="w-full h-full opacity-10 bg-[repeating-linear-gradient(0deg,transparent,transparent_10px,#000_10px,#000_11px)]"></div>
                 </div>
-                
-                {/* Link 2 */}
                 <div className="absolute top-[30%] left-1/2 -translate-x-1/2 w-2 h-4 bg-black"></div>
-
-                {/* Trailer 1 (Middle) */}
                 <div className="absolute top-[34%] left-0 w-full h-[35%] bg-zinc-200 border border-zinc-400 rounded-sm shadow-sm">
                     <div className="w-full h-full opacity-10 bg-[repeating-linear-gradient(0deg,transparent,transparent_10px,#000_10px,#000_11px)]"></div>
                 </div>
-
-                {/* Link 1 */}
                 <div className="absolute top-[69%] left-1/2 -translate-x-1/2 w-2 h-4 bg-black"></div>
-
-                {/* Cab (Bottom) */}
                 <div className={`absolute bottom-0 left-0 w-full h-[25%] ${v.color} rounded-sm shadow-md`}>
                     <div className="absolute top-1 left-1 right-1 h-[30%] bg-sky-900 rounded-sm"></div>
-                    <div className="absolute bottom-0 left-0 w-full h-3 bg-zinc-800"></div> {/* Big Bumper */}
+                    <div className="absolute bottom-0 left-0 w-full h-3 bg-zinc-800"></div>
                     {headlights}
                 </div>
             </div>
         );
     }
 
-    // Position calc: 3 lanes. Lane 0 = 20%, Lane 1 = 50%, Lane 2 = 80%
     const lanePositions = ['20%', '50%', '80%'];
     const leftPos = lanePositions[v.lane];
 
@@ -354,13 +392,95 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
           top: `${v.y}%`,
           transform: `translate(-50%, -100%) scale(${scale})`,
           opacity: opacity,
-          zIndex: Math.floor(v.y) // Ensure closer vehicles (higher Y) are on top
+          zIndex: Math.floor(v.y)
         }}
       >
         {content}
       </div>
     );
   };
+
+  // --- Tooltip & Overlay Component ---
+  const renderDeviceTooltip = (device: Device, positionClass: string) => {
+      const m = deviceMetrics[device.id] || {};
+      const isOffline = device.status === DeviceStatus.OFFLINE;
+      
+      return (
+        <div className={`absolute ${positionClass} opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity duration-200 z-50 w-40 scale-95 group-hover:scale-100 origin-bottom`}>
+            <div className="bg-zinc-950/90 backdrop-blur-md border border-zinc-700 p-2.5 rounded-lg text-[10px] text-zinc-300 shadow-[0_10px_30px_rgba(0,0,0,0.5)]">
+                <div className="flex items-center justify-between mb-2 border-b border-zinc-800 pb-1">
+                    <span className="font-bold text-white truncate w-24">{device.name}</span>
+                    <div className={`w-1.5 h-1.5 rounded-full ${isOffline ? 'bg-red-500' : 'bg-emerald-500'}`}></div>
+                </div>
+                
+                {isOffline ? (
+                     <div className="text-rose-500 font-mono text-center py-2 flex items-center justify-center gap-1">
+                        <Siren size={12} /> SIGNAL LOST
+                     </div>
+                ) : (
+                    <>
+                        {device.type === 'CAMERA' && (
+                            <div className="space-y-1 font-mono">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-zinc-500">FPS</span>
+                                    <span className="text-emerald-400 font-bold">{m.fps || '30.0'}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-zinc-500">ERR</span>
+                                    <span className="text-rose-400">{m.errorRate || '0.00%'}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-zinc-500">BIT</span>
+                                    <span className="text-blue-400">{m.bitrate || '4.0 Mbps'}</span>
+                                </div>
+                                {/* Activity Bar */}
+                                <div className="w-full h-0.5 bg-zinc-800 mt-1 overflow-hidden rounded-full">
+                                    <div className="h-full bg-emerald-500 w-3/4 animate-pulse"></div>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {(device.type === 'CABINET' || device.type === 'SERVER') && (
+                            <div className="space-y-1 font-mono">
+                                 <div className="flex justify-between items-center">
+                                     <span className="text-zinc-500 flex items-center gap-1"><Cpu size={8}/> CPU</span>
+                                     <span className={`font-bold ${parseInt(m.cpu)>80 ? 'text-amber-500' : 'text-emerald-400'}`}>{m.cpu || '--'}</span>
+                                 </div>
+                                 <div className="flex justify-between items-center">
+                                     <span className="text-zinc-500 flex items-center gap-1"><HardDrive size={8}/> MEM</span>
+                                     <span className="text-blue-400">{m.mem || '--'}</span>
+                                 </div>
+                                 <div className="flex justify-between items-center">
+                                     <span className="text-zinc-500 flex items-center gap-1"><Network size={8}/> CNX</span>
+                                     <span className="text-zinc-200">{m.conns || '--'}</span>
+                                 </div>
+                                 <div className="flex justify-between items-center">
+                                     <span className="text-zinc-500">TMP</span>
+                                     <span className="text-rose-300">{m.temp || '--'}</span>
+                                 </div>
+                            </div>
+                        )}
+
+                        {device.type === 'LASER' && (
+                             <div className="space-y-1 font-mono">
+                                <div className="flex justify-between items-center">
+                                    <span className="text-zinc-500">SCAN</span>
+                                    <span className="text-purple-400 font-bold">{m.scans || '50 Hz'}</span>
+                                </div>
+                                <div className="flex justify-between items-center">
+                                    <span className="text-zinc-500">STAT</span>
+                                    <span className="text-emerald-400">NOMINAL</span>
+                                </div>
+                             </div>
+                        )}
+                    </>
+                )}
+            </div>
+            {/* Tooltip Arrow */}
+            <div className="w-2.5 h-2.5 bg-zinc-950/90 rotate-45 absolute left-1/2 -translate-x-1/2 -bottom-1 border-r border-b border-zinc-700"></div>
+        </div>
+      );
+  }
 
   // --- Render Devices for a Lane ---
   const renderLaneEquipment = (laneIndex: number, deviceList: Device[]) => {
@@ -371,8 +491,12 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
 
       return (
         <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => cam && onDeviceClick(cam)}>
+             
+             {/* Tooltip Positioned Above */}
+             {cam && renderDeviceTooltip(cam, "bottom-full mb-3 left-1/2 -translate-x-1/2")}
+
              {/* Lane Control Sign (LCS) */}
-             <div className="mb-4 w-16 h-16 bg-black border-4 border-zinc-700 rounded-md flex items-center justify-center relative shadow-lg overflow-hidden">
+             <div className="mb-4 w-16 h-16 bg-black border-4 border-zinc-700 rounded-md flex items-center justify-center relative shadow-lg overflow-hidden transition-all duration-300 group-hover:border-zinc-500 group-hover:shadow-emerald-500/20">
                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(0,0,0,0)_50%,rgba(0,0,0,0.8)_100%)] z-10"></div>
                  {/* LED Matrix Grid Effect */}
                  <div className="absolute inset-0 bg-[length:2px_2px] bg-[rgba(30,30,30,1)] opacity-50 z-0"></div>
@@ -388,7 +512,7 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
              <div className="h-8 w-1 bg-zinc-500 mb-[-2px]"></div>
 
              {/* Sensor Housing Cluster */}
-             <div className="relative flex gap-1 bg-zinc-800 p-1.5 rounded-b-lg border border-zinc-600 shadow-xl transform transition-transform hover:scale-110">
+             <div className="relative flex gap-1 bg-zinc-800 p-1.5 rounded-b-lg border border-zinc-600 shadow-xl transform transition-transform group-hover:scale-105 group-hover:border-zinc-400">
                  
                  {/* ANPR Camera Unit */}
                  <div className="flex flex-col items-center gap-1">
@@ -419,12 +543,15 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
              </div>
              
              {/* Lane Label */}
-             <div className="mt-2 text-[9px] bg-black/70 px-1.5 py-0.5 rounded text-zinc-400 font-mono tracking-wider border border-white/10">
+             <div className="mt-2 text-[9px] bg-black/70 px-1.5 py-0.5 rounded text-zinc-400 font-mono tracking-wider border border-white/10 group-hover:text-white transition-colors">
                  LANE {laneIndex + 1}
              </div>
         </div>
       );
   }
+
+  // Find cabinet device
+  const cabinetDevice = devices.find(d => d.type === 'CABINET');
 
   return (
     <div className={`relative w-full h-[600px] overflow-hidden rounded-xl border border-white/10 transition-colors duration-2000 ${isNight ? 'bg-slate-900' : 'bg-sky-300'}`}>
@@ -438,6 +565,10 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
           75% { transform: translateY(0.5px) rotate(-0.2deg); }
           100% { transform: translateY(0px) rotate(0deg); }
         }
+        @keyframes popIn {
+          0% { transform: translate(-50%, 10px) scale(0); opacity: 0; }
+          100% { transform: translate(-50%, 0) scale(1); opacity: 1; }
+        }
       `}</style>
 
       {/* --- Environment --- */}
@@ -447,24 +578,49 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
       <div className={`absolute bottom-[35%] left-0 w-full h-48 bg-[url('https://raw.githubusercontent.com/google-fonts/noto-emoji/main/png/512/1f303.png')] opacity-30 bg-repeat-x bg-contain grayscale mix-blend-overlay`}></div>
 
       {/* --- The Road (Perspective Plane) --- */}
-      <div className="absolute bottom-0 w-full h-[70%] bg-zinc-800 origin-bottom transform [perspective:1000px] overflow-hidden flex justify-center">
+      <div className="absolute bottom-0 w-full h-[70%] bg-zinc-900 origin-bottom transform [perspective:1000px] overflow-hidden flex justify-center">
          {/* Road Surface Container - Rotated for 3D effect */}
          <div className="relative w-[150%] h-full bg-zinc-800 origin-bottom transform rotate-x-[60deg] shadow-[inset_0_50px_100px_rgba(0,0,0,0.8)]">
+            
+            {/* Asphalt Texture */}
+            <div className="absolute inset-0 opacity-40 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] mix-blend-overlay"></div>
+            
+            {/* Weathering / Grime Layers */}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/20 via-transparent to-black/40"></div>
+            
+            {/* Oil Stains */}
+            <div className="absolute top-[40%] left-[18%] w-48 h-24 bg-black/30 blur-2xl rounded-full transform -rotate-6"></div>
+            <div className="absolute top-[65%] left-[50%] w-32 h-32 bg-black/20 blur-3xl rounded-full"></div>
+            <div className="absolute top-[25%] right-[20%] w-64 h-12 bg-black/20 blur-xl rounded-full transform rotate-3"></div>
+
+            {/* Tire Skids */}
+            <div className="absolute top-[55%] left-[22%] w-1.5 h-24 bg-black/30 transform -skew-x-12 blur-[1px]"></div>
+            <div className="absolute top-[55%] left-[23%] w-1.5 h-24 bg-black/30 transform -skew-x-12 blur-[1px]"></div>
             
             {/* Lane Markers */}
             <div className="absolute inset-0 flex justify-evenly">
                 {/* Left Shoulder */}
-                <div className="h-full w-4 bg-yellow-500 border-r border-yellow-600"></div>
+                <div className="h-full w-4 bg-yellow-500 border-r border-yellow-600 shadow-[0_0_10px_rgba(234,179,8,0.3)]"></div>
                 {/* Lane Divider 1 */}
-                <div className="h-full w-3 bg-dashed-line opacity-70"></div>
+                <div className="h-full w-3 flex flex-col items-center justify-between opacity-70">
+                   {/* Create dashed line explicitly for better control or use bg-dashed */}
+                    <div className="w-full h-full bg-[linear-gradient(to_bottom,white_50%,transparent_50%)] bg-[length:10px_80px]"></div>
+                </div>
                 {/* Lane Divider 2 */}
-                <div className="h-full w-3 bg-dashed-line opacity-70"></div>
+                <div className="h-full w-3 flex flex-col items-center justify-between opacity-70">
+                    <div className="w-full h-full bg-[linear-gradient(to_bottom,white_50%,transparent_50%)] bg-[length:10px_80px]"></div>
+                </div>
                 {/* Right Shoulder */}
-                <div className="h-full w-4 bg-white border-l border-zinc-400"></div>
+                <div className="h-full w-4 bg-white border-l border-zinc-400 shadow-[0_0_10px_rgba(255,255,255,0.3)]"></div>
             </div>
             
+            {/* Debris / Small Rocks */}
+             <div className="absolute top-[80%] left-[30%] w-1 h-1 bg-zinc-600 rounded-full shadow-sm"></div>
+             <div className="absolute top-[60%] left-[60%] w-1.5 h-1 bg-zinc-700 rounded-full shadow-sm"></div>
+             <div className="absolute top-[45%] right-[40%] w-1 h-1.5 bg-zinc-500 rounded-full"></div>
+
             {/* Gantry Shadow on Road */}
-            <div className="absolute top-[30%] left-0 w-full h-8 bg-black/50 blur-xl"></div>
+            <div className="absolute top-[30%] left-0 w-full h-12 bg-black/60 blur-2xl"></div>
          </div>
       </div>
 
@@ -532,18 +688,19 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
           </div>
 
           {/* Side Cabinets Visualization (Moved slightly out for composition) */}
-          <div className="absolute -right-24 bottom-[-80px] w-20 h-32 pointer-events-auto group cursor-pointer z-20" onClick={() => onDeviceClick(devices.find(d => d.type === 'CABINET')!)}>
-              <div className="w-full h-full bg-zinc-300 border-2 border-zinc-400 rounded shadow-2xl relative">
-                  <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_5px_#10b981]"></div>
-                  <div className="absolute bottom-4 left-3 right-3 h-1 bg-zinc-400"></div> {/* Vent */}
-                  <div className="absolute top-4 left-3 right-3 h-1 bg-zinc-400"></div> {/* Vent */}
-                  <div className="absolute top-1/2 left-2 w-2 h-8 bg-zinc-400 rounded-full"></div> {/* Handle */}
-                  {/* Tooltip */}
-                  <div className="opacity-0 group-hover:opacity-100 absolute -top-8 left-0 bg-black text-white text-[10px] p-1 rounded transition-opacity whitespace-nowrap border border-zinc-700">
-                     Cabinet A (Online)
+          {cabinetDevice && (
+              <div className="absolute -right-24 bottom-[-80px] w-20 h-32 pointer-events-auto group cursor-pointer z-20" onClick={() => onDeviceClick(cabinetDevice)}>
+                  {/* Cabinet Tooltip */}
+                  {renderDeviceTooltip(cabinetDevice, "bottom-full mb-2 left-1/2 -translate-x-1/2")}
+                  
+                  <div className="w-full h-full bg-zinc-300 border-2 border-zinc-400 rounded shadow-2xl relative transition-all group-hover:bg-zinc-200 group-hover:border-zinc-300">
+                      <div className="absolute top-2 right-2 w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse shadow-[0_0_5px_#10b981]"></div>
+                      <div className="absolute bottom-4 left-3 right-3 h-1 bg-zinc-400"></div> {/* Vent */}
+                      <div className="absolute top-4 left-3 right-3 h-1 bg-zinc-400"></div> {/* Vent */}
+                      <div className="absolute top-1/2 left-2 w-2 h-8 bg-zinc-400 rounded-full"></div> {/* Handle */}
                   </div>
               </div>
-          </div>
+          )}
 
       </div>
 
