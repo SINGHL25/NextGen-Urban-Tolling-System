@@ -37,48 +37,72 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
 }) => {
   const [vehicles, setVehicles] = useState<VisualVehicle[]>([]);
   const requestRef = useRef<number>(0);
+  const previousTimeRef = useRef<number | undefined>(undefined);
   const lastSpawnTime = useRef<number>(0);
   const [hoveredDevice, setHoveredDevice] = useState<string | null>(null);
   const [flashLane, setFlashLane] = useState<number | null>(null); // Lane index triggering flash
 
   // --- Animation Loop ---
   const animate = (time: number) => {
+    if (previousTimeRef.current === undefined) {
+      previousTimeRef.current = time;
+    }
+    const deltaTime = (time - previousTimeRef.current) / 1000; // Seconds
+    previousTimeRef.current = time;
+
     if (!isSimRunning) {
       requestRef.current = requestAnimationFrame(animate);
       return;
     }
 
-    // 1. Spawn Vehicles Logic
-    const spawnRate = 2000 - (trafficVolume * 15); // Higher volume = lower interval
-    if (time - lastSpawnTime.current > spawnRate) {
-      if (Math.random() < 0.8) { // Chance to spawn
-        spawnVehicle();
-      }
-      lastSpawnTime.current = time;
-    }
-
-    // 2. Move Vehicles & Detect
     setVehicles(prevVehicles => {
       const nextVehicles: VisualVehicle[] = [];
-      
+      const laneOccupied = [false, false, false];
+
+      // 1. Move & Detect
       prevVehicles.forEach(v => {
-        // Move vehicle closer (increase Y)
-        const moveStep = v.speed * 0.005; 
+        // Physics: Speed (km/h) -> Screen % per second
+        // Adjust multiplier to calibrate visual speed
+        const moveStep = v.speed * 0.4 * deltaTime; 
         v.y += moveStep;
 
-        // Check Trigger Line (The Gantry is approx at 75% down screen)
-        const TRIGGER_LINE = 72; // Adjusted for new visual perspective
+        // Check Trigger Line (Gantry @ 72%)
+        const TRIGGER_LINE = 72;
         if (v.y >= TRIGGER_LINE && !v.processed) {
           v.processed = true;
           triggerDetection(v);
         }
 
-        // Keep if still on screen
+        // Keep if on screen
         if (v.y < 120) {
           nextVehicles.push(v);
+          // Mark lane occupied if vehicle is in the "spawn zone" (top 15%)
+          if (v.y < 15) {
+            laneOccupied[v.lane] = true;
+          }
         }
       });
-      return nextVehicles;
+
+      // 2. Spawn Logic
+      const spawnInterval = Math.max(200, 2500 - (trafficVolume * 20)); // Min 200ms, Max 2.5s
+      if (time - lastSpawnTime.current > spawnInterval) {
+        // Try to spawn
+        if (Math.random() < 0.8) {
+           const newVehicle = createVehicle(laneOccupied);
+           if (newVehicle) {
+             nextVehicles.push(newVehicle);
+             lastSpawnTime.current = time;
+           }
+        } else {
+           // Skip frame to add variety
+           lastSpawnTime.current = time + 100;
+        }
+      }
+
+      // Sort by Y for proper Z-indexing (vehicles in front drawn last? No, HTML order means last is top. 
+      // We want closer vehicles (High Y) to overlap further ones (Low Y).
+      // So Low Y first (drawn behind), High Y last (drawn in front).
+      return nextVehicles.sort((a, b) => a.y - b.y);
     });
 
     requestRef.current = requestAnimationFrame(animate);
@@ -89,7 +113,7 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
     return () => cancelAnimationFrame(requestRef.current);
   }, [trafficVolume, isSimRunning]);
 
-  const spawnVehicle = () => {
+  const createVehicle = (laneOccupied: boolean[]): VisualVehicle | null => {
     // Weighted Random Choice for Vehicle Type
     const rand = Math.random() * 100;
     let accumulated = 0;
@@ -103,12 +127,35 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
       }
     }
 
-    const lane = Math.floor(Math.random() * 3); // 0, 1, 2
+    // Smart Lane Selection
+    // Heavy vehicles prefer left lanes (0, 1), Fast cars prefer right (2)
+    let availableLanes: number[] = [];
+    if (selectedType === VehicleClass.CLASS_7_LHCV || selectedType === VehicleClass.CLASS_4_HCV) {
+        if (!laneOccupied[0]) availableLanes.push(0);
+        if (!laneOccupied[1]) availableLanes.push(1);
+    } else {
+        if (!laneOccupied[0]) availableLanes.push(0);
+        if (!laneOccupied[1]) availableLanes.push(1);
+        if (!laneOccupied[2]) availableLanes.push(2);
+    }
     
-    // Speed varies by lane and type
-    let baseSpeed = 80; // km/h representation
-    if (selectedType === VehicleClass.CLASS_7_LHCV) baseSpeed = 60;
-    if (lane === 2) baseSpeed += 10; // Fast lane
+    if (availableLanes.length === 0) return null; // No space
+
+    // Pick random available lane
+    const lane = availableLanes[Math.floor(Math.random() * availableLanes.length)];
+
+    // Speed calculation based on lane & type
+    // Lane 1: 60-80, Lane 2: 70-90, Lane 3: 90-110
+    let baseSpeed = 70;
+    if (lane === 1) baseSpeed = 80;
+    if (lane === 2) baseSpeed = 100;
+
+    // Adjust for type
+    if (selectedType === VehicleClass.CLASS_7_LHCV) baseSpeed *= 0.8; // Slow down big trucks
+    if (selectedType === VehicleClass.CLASS_4_HCV) baseSpeed *= 0.9;
+
+    // Add Randomness (+/- 10%)
+    const finalSpeed = baseSpeed * (0.9 + Math.random() * 0.2);
 
     // Visual Variations
     let color = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
@@ -124,19 +171,16 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
         variant = 'truck';
     }
 
-    setVehicles(prev => [
-      ...prev,
-      {
+    return {
         id: Date.now() + Math.random(),
         lane,
-        y: -15, // Start further back
-        speed: baseSpeed + (Math.random() * 10 - 5),
+        y: -20, // Start off-screen top
+        speed: finalSpeed,
         type: selectedType,
         processed: false,
         color,
         variant
-      }
-    ]);
+    };
   };
 
   const triggerDetection = (v: VisualVehicle) => {
@@ -189,7 +233,7 @@ const DigitalTwin: React.FC<DigitalTwinProps> = ({
     );
 
     // CSS for suspension animation
-    const suspensionStyle = { animation: `rumble ${0.2 + Math.random() * 0.1}s infinite linear` };
+    const suspensionStyle = { animation: `rumble ${0.2 + Math.random() * 0.1}s infinite linear`, willChange: 'transform' };
 
     let content = null;
 
