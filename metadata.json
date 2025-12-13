@@ -1,0 +1,5 @@
+{
+  "name": "NextGen Urban Tolling System",
+  "description": "A production-ready Digital Twin & AI Demo Platform for urban tunnel and freeway tolling infrastructure. Features real-time device monitoring, network topology visualization, transaction lifecycle tracking, and an integrated GenAI operator assistant.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,447 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Device, DeviceStatus, VehicleClass } from '../types';
+import { TRAFFIC_DISTRIBUTION } from '../constants';
+import { Video, Server, Battery, Zap, Activity, Aperture, ArrowDown, Wifi } from 'lucide-react';
+
+interface DigitalTwinProps {
+  devices: Device[];
+  onDeviceClick: (device: Device) => void;
+  simulationTime: number;
+  trafficVolume: number;
+  isSimRunning: boolean;
+  onVehicleDetected: (vehicleClass: VehicleClass, lane: number, speed: number) => void;
+}
+
+// Extended Visual Vehicle Type
+interface VisualVehicle {
+  id: number;
+  lane: number; // 0, 1, 2
+  y: number; // 0 to 100% (top to bottom)
+  speed: number;
+  type: VehicleClass;
+  processed: boolean;
+  color: string;
+  variant: 'sedan' | 'suv' | 'truck' | 'sport' | 'standard'; // Shape variation
+}
+
+const CAR_COLORS = ['bg-zinc-300', 'bg-zinc-800', 'bg-blue-700', 'bg-red-700', 'bg-white', 'bg-emerald-800', 'bg-slate-400'];
+const TRUCK_COLORS = ['bg-white', 'bg-blue-600', 'bg-orange-500', 'bg-yellow-500', 'bg-zinc-100'];
+
+const DigitalTwin: React.FC<DigitalTwinProps> = ({ 
+  devices, 
+  onDeviceClick, 
+  simulationTime, 
+  trafficVolume, 
+  isSimRunning,
+  onVehicleDetected 
+}) => {
+  const [vehicles, setVehicles] = useState<VisualVehicle[]>([]);
+  const requestRef = useRef<number>(0);
+  const lastSpawnTime = useRef<number>(0);
+  const [hoveredDevice, setHoveredDevice] = useState<string | null>(null);
+  const [flashLane, setFlashLane] = useState<number | null>(null); // Lane index triggering flash
+
+  // --- Animation Loop ---
+  const animate = (time: number) => {
+    if (!isSimRunning) {
+      requestRef.current = requestAnimationFrame(animate);
+      return;
+    }
+
+    // 1. Spawn Vehicles Logic
+    const spawnRate = 2000 - (trafficVolume * 15); // Higher volume = lower interval
+    if (time - lastSpawnTime.current > spawnRate) {
+      if (Math.random() < 0.8) { // Chance to spawn
+        spawnVehicle();
+      }
+      lastSpawnTime.current = time;
+    }
+
+    // 2. Move Vehicles & Detect
+    setVehicles(prevVehicles => {
+      const nextVehicles: VisualVehicle[] = [];
+      
+      prevVehicles.forEach(v => {
+        // Move vehicle closer (increase Y)
+        const moveStep = v.speed * 0.005; 
+        v.y += moveStep;
+
+        // Check Trigger Line (The Gantry is approx at 75% down screen)
+        const TRIGGER_LINE = 75;
+        if (v.y >= TRIGGER_LINE && !v.processed) {
+          v.processed = true;
+          triggerDetection(v);
+        }
+
+        // Keep if still on screen
+        if (v.y < 120) {
+          nextVehicles.push(v);
+        }
+      });
+      return nextVehicles;
+    });
+
+    requestRef.current = requestAnimationFrame(animate);
+  };
+
+  useEffect(() => {
+    requestRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(requestRef.current);
+  }, [trafficVolume, isSimRunning]);
+
+  const spawnVehicle = () => {
+    // Weighted Random Choice for Vehicle Type
+    const rand = Math.random() * 100;
+    let accumulated = 0;
+    let selectedType = VehicleClass.CLASS_2_CAR;
+    
+    for (const item of TRAFFIC_DISTRIBUTION) {
+      accumulated += item.weight;
+      if (rand <= accumulated) {
+        selectedType = item.type;
+        break;
+      }
+    }
+
+    const lane = Math.floor(Math.random() * 3); // 0, 1, 2
+    
+    // Speed varies by lane and type
+    let baseSpeed = 80; // km/h representation
+    if (selectedType === VehicleClass.CLASS_7_LHCV) baseSpeed = 60;
+    if (lane === 2) baseSpeed += 10; // Fast lane
+
+    // Visual Variations
+    let color = CAR_COLORS[Math.floor(Math.random() * CAR_COLORS.length)];
+    let variant: VisualVehicle['variant'] = 'standard';
+
+    if (selectedType === VehicleClass.CLASS_2_CAR) {
+        const r = Math.random();
+        if (r < 0.3) variant = 'suv';
+        else if (r < 0.5) variant = 'sport';
+        else variant = 'sedan';
+    } else if (selectedType === VehicleClass.CLASS_4_HCV || selectedType === VehicleClass.CLASS_7_LHCV) {
+        color = TRUCK_COLORS[Math.floor(Math.random() * TRUCK_COLORS.length)];
+        variant = 'truck';
+    }
+
+    setVehicles(prev => [
+      ...prev,
+      {
+        id: Date.now() + Math.random(),
+        lane,
+        y: -15, // Start further back
+        speed: baseSpeed + (Math.random() * 10 - 5),
+        type: selectedType,
+        processed: false,
+        color,
+        variant
+      }
+    ]);
+  };
+
+  const triggerDetection = (v: VisualVehicle) => {
+    setFlashLane(v.lane);
+    setTimeout(() => setFlashLane(null), 100); // Faster flash
+    onVehicleDetected(v.type, v.lane + 1, v.speed);
+  };
+
+  // --- Rendering Helpers ---
+
+  const getStatusColor = (status: DeviceStatus) => {
+    switch (status) {
+      case DeviceStatus.ONLINE: return 'bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.8)]';
+      case DeviceStatus.WARNING: return 'bg-amber-500 shadow-[0_0_10px_rgba(245,158,11,0.8)]';
+      case DeviceStatus.OFFLINE: return 'bg-rose-500 shadow-[0_0_15px_rgba(244,63,94,0.8)]';
+      default: return 'bg-gray-500';
+    }
+  };
+
+  const isNight = simulationTime > 19 || simulationTime < 6;
+
+  // Render Individual Vehicle Models
+  const renderVehicle = (v: VisualVehicle) => {
+    // 3D Perspective Scale: Items get larger as y increases (approaching viewer)
+    const scale = 0.5 + (v.y / 100) * 1.8; 
+    const opacity = v.y < -5 ? 0 : 1;
+
+    // Headlight logic
+    const headlights = (
+        <>
+            <div className={`absolute bottom-[2px] left-1 w-2 h-1 bg-yellow-100 rounded-full ${isNight ? 'shadow-[0_10px_20px_rgba(255,255,200,0.6)]' : ''}`}></div>
+            <div className={`absolute bottom-[2px] right-1 w-2 h-1 bg-yellow-100 rounded-full ${isNight ? 'shadow-[0_10px_20px_rgba(255,255,200,0.6)]' : ''}`}></div>
+            {isNight && (
+                <>
+                  <div className="absolute bottom-[-60px] left-1 w-8 h-24 bg-gradient-to-b from-yellow-100/30 to-transparent transform -skew-x-12 blur-md"></div>
+                  <div className="absolute bottom-[-60px] right-1 w-8 h-24 bg-gradient-to-b from-yellow-100/30 to-transparent transform skew-x-12 blur-md"></div>
+                </>
+            )}
+        </>
+    );
+
+    const shadow = <div className="absolute top-[5%] left-[-10%] w-[120%] h-[110%] bg-black/40 blur-md rounded-full transform scale-y-110"></div>;
+    const wheels = (offsetY: number = 0) => (
+      <>
+         <div className="absolute -left-1 top-[15%] w-1 h-3 bg-black rounded-l"></div>
+         <div className="absolute -right-1 top-[15%] w-1 h-3 bg-black rounded-r"></div>
+         <div className="absolute -left-1 bottom-[15%] w-1 h-3 bg-black rounded-l"></div>
+         <div className="absolute -right-1 bottom-[15%] w-1 h-3 bg-black rounded-r"></div>
+      </>
+    );
+
+    // CSS for suspension animation
+    const suspensionStyle = { animation: `rumble ${0.2 + Math.random() * 0.1}s infinite linear` };
+
+    let content = null;
+
+    if (v.type === VehicleClass.CLASS_1_MOTO) {
+      // Motorcycle
+      content = (
+        <div className="relative w-4 h-10" style={suspensionStyle}>
+            {shadow}
+            <div className="absolute inset-0 bg-zinc-800 rounded-full flex flex-col items-center">
+                 <div className={`w-3 h-4 ${v.color} rounded-t-full mt-1`}></div> {/* Rider/Tank */}
+                 <div className="w-4 h-1 bg-zinc-400 mt-1"></div> {/* Handlebars */}
+                 <div className="w-2 h-2 bg-yellow-200 rounded-full mt-auto mb-1 shadow-lg"></div> {/* Headlight */}
+                 {isNight && <div className="absolute bottom-[-40px] w-4 h-16 bg-gradient-to-b from-yellow-100/40 to-transparent blur-md"></div>}
+            </div>
+        </div>
+      );
+    } else if (v.type === VehicleClass.CLASS_2_CAR) {
+      // Car Variants
+      const isSuv = v.variant === 'suv';
+      const isSport = v.variant === 'sport';
+      const width = isSuv ? 'w-14' : 'w-12';
+      const height = isSuv ? 'h-24' : 'h-22';
+      
+      content = (
+        <div className={`relative ${width} ${height}`} style={suspensionStyle}>
+           {shadow}
+           {wheels()}
+           {/* Chassis */}
+           <div className={`absolute inset-0 ${v.color} rounded-lg overflow-hidden shadow-inner border-b-2 border-black/20`}>
+              {/* Roof / Windshield Area */}
+              <div className={`absolute top-[20%] left-[5%] right-[5%] bottom-[25%] bg-zinc-900/20 rounded-lg`}>
+                 {/* Windshield */}
+                 <div className="absolute bottom-0 left-0 right-0 h-[40%] bg-gradient-to-t from-sky-300/40 to-sky-900/60 backdrop-blur-[1px]"></div>
+                 {/* Rear Window */}
+                 <div className="absolute top-0 left-0 right-0 h-[25%] bg-black/60"></div>
+                 {/* Roof Top */}
+                 <div className={`absolute top-[25%] left-0 right-0 bottom-[40%] ${v.color} brightness-110`}></div>
+              </div>
+              {/* Hood Details */}
+              <div className="absolute bottom-0 left-0 w-full h-[25%] bg-gradient-to-t from-black/10 to-transparent"></div>
+              {/* Grill */}
+              <div className="absolute bottom-0.5 left-1/4 right-1/4 h-1 bg-black/50 rounded-full"></div>
+              {headlights}
+           </div>
+        </div>
+      );
+    } else if (v.type === VehicleClass.CLASS_4_HCV) {
+        // Truck (Cab + Box)
+        content = (
+            <div className="relative w-16 h-36" style={suspensionStyle}>
+                {shadow}
+                {/* Rear Wheels */}
+                <div className="absolute -left-1 top-[10%] w-1.5 h-6 bg-black rounded-l"></div>
+                <div className="absolute -right-1 top-[10%] w-1.5 h-6 bg-black rounded-r"></div>
+                {/* Front Wheels */}
+                <div className="absolute -left-1 bottom-[10%] w-1.5 h-4 bg-black rounded-l"></div>
+                <div className="absolute -right-1 bottom-[10%] w-1.5 h-4 bg-black rounded-r"></div>
+
+                {/* Cargo Box (Rear/Top) */}
+                <div className={`absolute top-0 left-0 w-full h-[70%] bg-zinc-100 border border-zinc-300 rounded-sm shadow-sm flex items-center justify-center overflow-hidden`}>
+                     {/* Corrugated Texture */}
+                     <div className="w-full h-full opacity-10 bg-[repeating-linear-gradient(90deg,transparent,transparent_4px,#000_4px,#000_5px)]"></div>
+                </div>
+
+                {/* Connector */}
+                <div className="absolute top-[68%] left-1/3 right-1/3 h-2 bg-zinc-800"></div>
+
+                {/* Cab (Front/Bottom) */}
+                <div className={`absolute bottom-0 left-0 w-full h-[28%] ${v.color} rounded-sm shadow-md border-b-2 border-black/20`}>
+                    <div className="absolute top-1 left-1 right-1 h-[40%] bg-sky-900 rounded-sm"></div> {/* Windshield */}
+                    <div className="absolute bottom-0 left-0 w-full h-2 bg-zinc-800"></div> {/* Bumper */}
+                    {headlights}
+                </div>
+            </div>
+        );
+    } else if (v.type === VehicleClass.CLASS_7_LHCV) {
+        // Road Train (Trailer 2 + Trailer 1 + Cab)
+        content = (
+            <div className="relative w-16 h-64" style={suspensionStyle}>
+                {shadow}
+                
+                {/* Trailer 2 (Top) */}
+                <div className="absolute top-0 left-0 w-full h-[30%] bg-zinc-200 border border-zinc-400 rounded-sm shadow-sm">
+                    <div className="w-full h-full opacity-10 bg-[repeating-linear-gradient(0deg,transparent,transparent_10px,#000_10px,#000_11px)]"></div>
+                </div>
+                
+                {/* Link 2 */}
+                <div className="absolute top-[30%] left-1/2 -translate-x-1/2 w-2 h-4 bg-black"></div>
+
+                {/* Trailer 1 (Middle) */}
+                <div className="absolute top-[34%] left-0 w-full h-[35%] bg-zinc-200 border border-zinc-400 rounded-sm shadow-sm">
+                    <div className="w-full h-full opacity-10 bg-[repeating-linear-gradient(0deg,transparent,transparent_10px,#000_10px,#000_11px)]"></div>
+                </div>
+
+                {/* Link 1 */}
+                <div className="absolute top-[69%] left-1/2 -translate-x-1/2 w-2 h-4 bg-black"></div>
+
+                {/* Cab (Bottom) */}
+                <div className={`absolute bottom-0 left-0 w-full h-[25%] ${v.color} rounded-sm shadow-md`}>
+                    <div className="absolute top-1 left-1 right-1 h-[30%] bg-sky-900 rounded-sm"></div>
+                    <div className="absolute bottom-0 left-0 w-full h-3 bg-zinc-800"></div> {/* Big Bumper */}
+                    {headlights}
+                </div>
+            </div>
+        );
+    }
+
+    // Position calc: 3 lanes. Lane 0 = 20%, Lane 1 = 50%, Lane 2 = 80%
+    const lanePositions = ['20%', '50%', '80%'];
+    const leftPos = lanePositions[v.lane];
+
+    return (
+      <div 
+        key={v.id}
+        className={`absolute z-20 flex justify-center items-end`}
+        style={{
+          left: leftPos,
+          top: `${v.y}%`,
+          transform: `translate(-50%, -100%) scale(${scale})`,
+          opacity: opacity,
+          zIndex: Math.floor(v.y) // Ensure closer vehicles (higher Y) are on top
+        }}
+      >
+        {content}
+      </div>
+    );
+  };
+
+  return (
+    <div className={`relative w-full h-[600px] overflow-hidden rounded-xl border border-white/10 transition-colors duration-2000 ${isNight ? 'bg-slate-900' : 'bg-sky-300'}`}>
+      
+      {/* Global Styles for Animations */}
+      <style>{`
+        @keyframes rumble {
+          0% { transform: translateY(0px) rotate(0deg); }
+          25% { transform: translateY(-0.5px) rotate(0.2deg); }
+          50% { transform: translateY(0px) rotate(0deg); }
+          75% { transform: translateY(0.5px) rotate(-0.2deg); }
+          100% { transform: translateY(0px) rotate(0deg); }
+        }
+      `}</style>
+
+      {/* --- Environment --- */}
+      <div className={`absolute inset-0 bg-gradient-to-b ${isNight ? 'from-slate-900 via-slate-800 to-black' : 'from-sky-400 via-sky-200 to-emerald-800'} opacity-100`}></div>
+      
+      {/* Cityscape Silhouette */}
+      <div className={`absolute bottom-[35%] left-0 w-full h-32 bg-[url('https://raw.githubusercontent.com/google-fonts/noto-emoji/main/png/512/1f303.png')] opacity-20 bg-repeat-x bg-contain`}></div>
+
+      {/* --- The Road (Perspective Plane) --- */}
+      <div className="absolute bottom-0 w-full h-[70%] bg-zinc-800 origin-bottom transform [perspective:1000px] overflow-hidden flex justify-center">
+         {/* Road Surface Container - Rotated for 3D effect */}
+         <div className="relative w-[150%] h-full bg-zinc-800 origin-bottom transform rotate-x-[60deg] shadow-[inset_0_50px_100px_rgba(0,0,0,0.8)]">
+            
+            {/* Lane Markers */}
+            <div className="absolute inset-0 flex justify-evenly">
+                {/* Left Shoulder */}
+                <div className="h-full w-4 bg-yellow-500 border-r border-yellow-600"></div>
+                {/* Lane Divider 1 */}
+                <div className="h-full w-2 bg-dashed-line opacity-70"></div>
+                {/* Lane Divider 2 */}
+                <div className="h-full w-2 bg-dashed-line opacity-70"></div>
+                {/* Right Shoulder */}
+                <div className="h-full w-4 bg-white border-l border-zinc-400"></div>
+            </div>
+         </div>
+      </div>
+
+      {/* --- Vehicles Layer (2D Overlay with Scaling) --- */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden">
+         {vehicles.map(renderVehicle)}
+      </div>
+
+
+      {/* --- The Gantry (Foreground) --- */}
+      <div className="absolute top-[65%] left-1/2 -translate-x-1/2 w-full max-w-4xl z-30 pointer-events-none">
+          
+          {/* Main Truss */}
+          <div className="w-full h-24 bg-zinc-900/90 border-y-4 border-zinc-600 relative flex items-center justify-evenly shadow-2xl backdrop-blur-sm">
+             {/* Texture */}
+             <div className="absolute inset-0 bg-[linear-gradient(45deg,rgba(0,0,0,0.5)_25%,transparent_25%,transparent_50%,rgba(0,0,0,0.5)_50%,rgba(0,0,0,0.5)_75%,transparent_75%,transparent)] bg-[length:10px_10px] opacity-20"></div>
+
+             {/* Lane 1 Equipment */}
+             <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => onDeviceClick(devices[0])}>
+                 <div className="w-16 h-8 bg-black border-2 border-zinc-700 mb-2 flex items-center justify-center rounded overflow-hidden shadow-[0_0_15px_rgba(0,255,0,0.2)]">
+                    <ArrowDown className="text-emerald-500 animate-bounce" size={24} />
+                 </div>
+                 <div className="w-10 h-12 bg-zinc-800 rounded-b border border-zinc-600 flex flex-col items-center justify-end pb-1 relative">
+                    <div className={`w-2 h-2 rounded-full mb-1 ${getStatusColor(devices[0].status)}`}></div>
+                    <Aperture size={14} className="text-zinc-400" />
+                    {/* Flash Effect */}
+                    {flashLane === 0 && <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-32 bg-white rounded-full blur-xl opacity-80 animate-ping"></div>}
+                 </div>
+                 <div className="mt-1 text-[8px] bg-black/50 px-1 text-white font-mono">LANE 1</div>
+             </div>
+
+             {/* Lane 2 Equipment */}
+             <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => onDeviceClick(devices[2])}>
+                 <div className="w-16 h-8 bg-black border-2 border-zinc-700 mb-2 flex items-center justify-center rounded overflow-hidden shadow-[0_0_15px_rgba(0,255,0,0.2)]">
+                    <ArrowDown className="text-emerald-500 animate-bounce" size={24} />
+                 </div>
+                 <div className="w-10 h-12 bg-zinc-800 rounded-b border border-zinc-600 flex flex-col items-center justify-end pb-1 relative">
+                    <div className={`w-2 h-2 rounded-full mb-1 ${getStatusColor(devices[2].status)}`}></div>
+                    <Aperture size={14} className="text-zinc-400" />
+                     {flashLane === 1 && <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-32 bg-white rounded-full blur-xl opacity-80 animate-ping"></div>}
+                 </div>
+                 <div className="mt-1 text-[8px] bg-black/50 px-1 text-white font-mono">LANE 2</div>
+             </div>
+
+             {/* Lane 3 Equipment */}
+             <div className="relative flex flex-col items-center group pointer-events-auto cursor-pointer" onClick={() => onDeviceClick(devices[4])}>
+                 <div className="w-16 h-8 bg-black border-2 border-zinc-700 mb-2 flex items-center justify-center rounded overflow-hidden shadow-[0_0_15px_rgba(0,255,0,0.2)]">
+                    <ArrowDown className="text-emerald-500 animate-bounce" size={24} />
+                 </div>
+                 <div className="w-10 h-12 bg-zinc-800 rounded-b border border-zinc-600 flex flex-col items-center justify-end pb-1 relative">
+                    <div className={`w-2 h-2 rounded-full mb-1 ${getStatusColor(devices[4].status)}`}></div>
+                    <Aperture size={14} className="text-zinc-400" />
+                     {flashLane === 2 && <div className="absolute -bottom-10 left-1/2 -translate-x-1/2 w-32 h-32 bg-white rounded-full blur-xl opacity-80 animate-ping"></div>}
+                 </div>
+                 <div className="mt-1 text-[8px] bg-black/50 px-1 text-white font-mono">LANE 3</div>
+             </div>
+
+          </div>
+
+          {/* Pillars */}
+          <div className="absolute -left-8 top-[-50px] bottom-[-400px] w-12 bg-zinc-800 border-r-4 border-zinc-900"></div>
+          <div className="absolute -right-8 top-[-50px] bottom-[-400px] w-12 bg-zinc-800 border-l-4 border-zinc-900"></div>
+
+          {/* Side Cabinets Visualization */}
+          <div className="absolute -right-32 bottom-[-100px] w-24 h-40 pointer-events-auto group cursor-pointer" onClick={() => onDeviceClick(devices.find(d => d.type === 'CABINET')!)}>
+              <div className="w-full h-full bg-zinc-400 border-2 border-zinc-500 rounded shadow-2xl relative">
+                  <div className="absolute top-2 right-2 w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                  <div className="absolute bottom-4 left-4 right-4 h-2 bg-zinc-500/50"></div>
+                  <div className="absolute top-1/2 left-2 w-16 h-1 bg-zinc-500"></div>
+                  {/* Tooltip */}
+                  <div className="opacity-0 group-hover:opacity-100 absolute -top-10 left-0 bg-black text-white text-xs p-1 rounded transition-opacity">
+                     Cabinet A (Online)
+                  </div>
+              </div>
+          </div>
+
+      </div>
+
+      {/* Overlay Info */}
+      <div className="absolute bottom-4 left-4 bg-black/60 backdrop-blur px-3 py-1 rounded border border-white/10">
+         <div className="flex items-center gap-2 text-xs font-mono text-emerald-400">
+            <Wifi size={12} />
+            GANTRY LIVE FEED :: APPLETON DOCK ENTRY
+         </div>
+      </div>
+
+    </div>
+  );
+};
+
+export default DigitalTwin;
